@@ -2,13 +2,18 @@ module Flugbuch
 
 import CSV
 import SQLite
+using LightGraphs: Graph, connected_components, add_edge!
 using Dates
 using ArgParse
 using PrettyTables
 
+abstract type Flighty end
+const Numbered{T} = Tuple{Int, T}
+
 include("flight.jl")
-include("flight_accumulator.jl")
 include("flight_group.jl")
+include("flight_accumulator.jl")
+include("util.jl")
 
 export flightbook, main, csvImport
 
@@ -94,26 +99,70 @@ function flightbook(;
 	db = SQLite.DB("data.db")
 	flights = fetchAllFlights(db)
 
-	filteredFlights = filter(flights) do f
-		(ismissing(endNr) || f.nr <= endNr) &&
-		(ismissing(beginNr) || f.nr >= beginNr) &&
-		(ismissing(endDate) || f.date <= endDate) &&
-		(ismissing(beginDate) || f.date >= beginDate)
+	# filteredFlights = filter(flights) do f
+	#
+	# end
+	#
+	# if isempty(filteredFlights)
+	# 	println("\nKeine Flüge entsprechen dem Filter.")
+	# 	return
+	# end
+
+	flightsByDate = Dict{Date, Vector{Flight}}()
+	for f in flights
+		if !haskey(flightsByDate, f.date)
+			flightsByDate[f.date] = [f]
+		else
+			push!(flightsByDate[f.date], f)
+		end
 	end
 
-	if length(filteredFlights) == 0
-		println("\nKeine Flüge entsprechen dem Filter.")
-		return
+	flighties = Flighty[]
+	for (date, flights) in flightsByDate
+		g = Graph(length(flights))
+
+		for i in 1:length(flights)
+			for j in i+1:length(flights)
+				!groupable(flights[i], flights[j]) || add_edge!(g, i, j)
+			end
+		end
+
+		#pretty_tablee(flights)
+		#println(connected_components(g))
+
+		#groupedFlights = FlightGroup[]
+		for component in connected_components(g)
+			flightsInComponent = flights[component]
+			push!(flighties, FlightGroup(flightsInComponent))
+		end
+
+		#flighties = [flighties; groupedFlights]
+		#acc = FlightAccumulator(groupedFlights)
+		#pretty_tablee(groupedFlights, sums = [(acc, "Σ")])
 	end
 
-	lastFlight = filteredFlights[end]
-	allUpToLast = filter(f -> f.nr <= lastFlight.nr, flights)
 
-	filteredAcc = sum([FlightAccumulator(); filteredFlights])
-	totalAcc = sum([FlightAccumulator(); allUpToLast])
 
-	pretty_tablee(filteredFlights, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
+	#pretty_tablee(filteredFlights, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
+	sort!(flighties)
+	flighties = [(i, flighties[i]) for i in eachindex(flighties)]
 
+	filteredFlighties = filter(flighties) do (nr, f)
+		(ismissing(beginNr) || nr >= beginNr) &&
+		(ismissing(endNr) || nr <= endNr) &&
+		(ismissing(endDate) || date(f) <= endDate) &&
+		(ismissing(beginDate) || date(f) >= beginDate)
+	end
+
+	(lastFlightNr, lastFlight) = filteredFlighties[end]
+	allUpToLast = filter(t -> t[1] <= lastFlightNr, flighties)
+
+	filteredAcc = FlightAccumulator([t[2] for t in filteredFlighties])
+	totalAcc = FlightAccumulator([t[2] for t in allUpToLast])
+
+
+	pretty_tablee(filteredFlighties, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
+	nothing
 end
 
 function csvImport(fileName::String)
@@ -140,15 +189,20 @@ function csvImport(fileName::String)
 		catch e
 			println("error: ", e)
 			println("aborting!")
+			throw(e)
 			return
 		end
 	end
 
-	println("\n$(length(ignoredFlights)) ignorierte Flüge (nicht für mein Flugbuch): ")
-	pretty_tablee(ignoredFlights)
+	if !isempty(ignoredFlights)
+		println("\n$(length(ignoredFlights)) ignorierte Flüge (nicht für mein Flugbuch): ")
+		pretty_tablee(ignoredFlights)
+	end
 
-	println("\n$(length(overlappingFlights)) ignorierte Flüge (in den Importdaten überlappend): ")
-	pretty_tablee(overlappingFlights)
+	if !isempty(overlappingFlights)
+		println("\n$(length(overlappingFlights)) ignorierte Flüge (in den Importdaten überlappend): ")
+		pretty_tablee(overlappingFlights)
+	end
 
 	db = SQLite.DB("data.db")
 	presentFlights = fetchAllFlights(db)
@@ -172,7 +226,7 @@ function csvImport(fileName::String)
 	end
 
 	if !isempty(insertableFlights)
-		println("\n$(length(flights)) Flüge für den Import:")
+		println("\n$(length(insertableFlights)) Flüge für den Import:")
 		pretty_tablee(insertableFlights)
 	else
 		println("\nKeine Flüge zu importieren.")
@@ -205,22 +259,11 @@ function csvImport(fileName::String)
 		SQLite.bind!(stmt, 14, f.comments)
 		SQLite.execute!(stmt)
 	end
-
-
-
-end
-
-function ellipsis(str::String, limit::Int)
-	if limit <= 0 || limit >= length(str)
-		return str
-	end
-
-	str[1:nextind(str, limit)] * "..."
 end
 
 function pretty_tablee(
-	flights::Vector{Flight};
-	sums::Vector{Tuple{FlightAccumulator, String}} = Vector{Tuple{FlightAccumulator, String}}(),
+	flights::Vector{Tuple{Int,T}} where T <: Flighty;
+	sums::Vector{Tuple{FlightAccumulator, String}} = Tuple{FlightAccumulator, String}[],
 	limitAircraft::Int = -1,
 	limitPilots::Int = -1,
 	limitLocations::Int = -1,
@@ -256,7 +299,7 @@ function pretty_tablee(
 		!(i in 3:4 && limitAircraft == 0) &&
 		!(i in 5:6 && limitPilots == 0) &&
 		!(i in 8:9 && limitLocations == 0) &&
-		!(i == 17 && limitComments == 0)
+		!(i == 18 && limitComments == 0)
 
 	formatter = Dict(
 		4 => (value, i) -> ellipsis(value, limitAircraft),
@@ -264,41 +307,41 @@ function pretty_tablee(
 		6 => (value, i) -> ellipsis(value, limitPilots),
 		8 => (value, i) -> ellipsis(value, limitLocations),
 		9 => (value, i) -> ellipsis(value, limitLocations),
-		17 => (value, i) -> ellipsis(value, limitComments),
+		18 => (value, i) -> ellipsis(value, limitComments),
 	)
 
 	sumHighlighter = Highlighter(
-		f = (data, i, j) -> i in [sumRows] && j in [1,12,17],
+		f = (data, i, j) -> i in [sumRows] && j in [1,13,18],
 		crayon = sumCrayon
 	)
 
 	dualHighlighter = Highlighter(
-		f = (data, i, j) -> (j in 12:13 && i <= length(flights) && flights[i].dual) || j == 15,
+		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && dual(flights[i][2])) || j == 16,
 		crayon = dualCrayon
 	)
 
 	picHighlighter = Highlighter(
-		f = (data, i, j) -> (j in 12:13 && i <= length(flights) && !flights[i].dual) || j == 14,
+		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && !dual(flights[i][2])) || j == 15,
 		crayon = picCrayon
 	)
 
 	instrHighlighter = Highlighter(
-		f = (data, i, j) -> j == 16,
+		f = (data, i, j) -> j == 17,
 		crayon = instrCrayon
 	)
 
 	picSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 14 && i in sumRows,
+		f = (data, i, j) -> j == 15 && i in sumRows,
 		crayon = sumCrayon * picCrayon
 	)
 
 	dualSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 15 && i in sumRows,
+		f = (data, i, j) -> j == 16 && i in sumRows,
 		crayon = sumCrayon * dualCrayon
 	)
 
 	instrSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 16 && i in sumRows,
+		f = (data, i, j) -> j == 17 && i in sumRows,
 		crayon = sumCrayon * instrCrayon
 	)
 
@@ -311,6 +354,7 @@ function pretty_tablee(
 		hlines = hlines,
 		formatter = formatter,
 		alignment = :l,
+		linebreaks = true,
 		highlighters = (sumHighlighter, dualSumHighlighter, dualHighlighter, instrSumHighlighter, instrHighlighter, picSumHighlighter, picHighlighter),
 		filters_col = (columnFilter,)
 	)

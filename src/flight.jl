@@ -5,7 +5,7 @@ using CSV
 using Printf
 import SQLite
 
-mutable struct Flight
+mutable struct Flight <: Flighty
 	id::UInt
 	nr::UInt
 	callsign::String
@@ -25,59 +25,6 @@ mutable struct Flight
 	dual::Bool
 	instr::Bool
 end
-
-function toPrettyTableRow(f::Flight)
-
-	flags = (f.dual ? "D" : "P") * (f.instr ? "I" : "")
-	timeString = asString(minutes(f))
-
-	return [
-		f.nr,
-		Dates.format(f.date, "dd.mm.yyyy"),
-		f.callsign,
-		f.aircraftType,
-		f.pilot,
-		!ismissing(f.copilot) ? f.copilot : "-",
-		convert(String, f.launch),
-		f.departureLocation,
-		f.arrivalLocation,
-		Dates.format(f.departureTime, "HH:MM"),
-		Dates.format(f.departureTime, "HH:MM"),
-		timeString,
-		flags,
-		f.dual ? "" : timeString,
-		f.dual ? timeString : "",
-		f.instr ? timeString : "",
-		!ismissing(f.comments) ? f.comments : ""
-	]
-end
-
-function toPrettyTableHeader()
-	return [
-		"Nr.", "Datum", "Reg.", "Typ",
-		"Pilot", "Co", "S",
-		"Von", "Nach", "Start", "Land",
-		"Zeit", "~", "PIC", "DUAL", "INSTR",
-		"Bemerkungen"
-	]
-end
-
-
-getNr(f::Flight) = f.nr
-getCallsign(f::Flight) = f.callsign
-getAircraftType(f::Flight) = f.aircraftType
-getPilot(f::Flight) = f.pilot
-getCopilot(f::Flight) = f.copilot
-getLaunch(f::Flight) = f.launch
-getDate(f::Flight) = f.date
-getDepartureTime(f::Flight) = f.departureTime
-getArrivalTime(f::Flight) = f.arrivalTime
-getNumberOfLanding(f::Flight) = f.numberOfLandings
-getDepartureLocation(f::Flight) = f.departureLocation
-getArrivalLocation(f::Flight) = f.arrivalLocation
-getComments(f::Flight) = f.comments
-isDual(f::Flight) = f.dual
-isInstr(f::Flight) = f.instr
 
 function Flight(row::NamedTuple)
 	Flight(
@@ -100,8 +47,6 @@ function Flight(row::NamedTuple)
 	)
 end
 
-pm(fun::Function, x) = !ismissing(x) ? fun(x) : missing
-
 function Flight(row::CSV.Row, selfName::String)
 	inMyFlightbook = true
 	!ismissing(row.Datum)		|| throw(ArgumentError("Datum nicht gegeben."))
@@ -120,17 +65,18 @@ function Flight(row::CSV.Row, selfName::String)
 	pilotName = 	strip(row.Pilot)
 	copilotName =	pm(strip, row.Begleiter_FI)
 
-	aircraftType = 	strip(row.Lfz_Muster)
 	typeNormalizations = [
 		("GROB G 103 \"TWIN II\"", "Twin II"),
 		("GROB G 103 C \"TWIN III\"", "Twin III"),
 		("TWIN ASTIR TRAINER", "Twin I")
 	]
-	for (oldType, newType) in typeNormalizations
-		if occursin(oldType, aircraftType)
-			aircraftType = newType
-		end
-	end
+	locNormalizations = [
+		("Kammermark", "KM")
+	]
+
+	aircraftType = 	applyNormalizations(strip(row.Lfz_Muster), typeNormalizations)
+	departureLoc = 	applyNormalizations(strip(row.Startort), locNormalizations)
+	arrivalLoc =	applyNormalizations(strip(row.Landeort), locNormalizations)
 
 	if isequal(pilotName, selfName)
 		pilot = true
@@ -185,24 +131,14 @@ function Flight(row::CSV.Row, selfName::String)
 			Time(row.Start),
 			Time(row.Landung),
 			row.Landungen,
-			row.Startort,
-			row.Landeort,
+			departureLoc,
+			arrivalLoc,
 			row.Bemerkung,
 			dual,
 			instr
 		), inMyFlightbook
 	)
 
-end
-
-function Base.isless(a::Flight, b::Flight)
- 	if a.date < b.date
-		return true
-	elseif a.date > b.date
-		return false
-	else
-		return a.departureTime < b.departureTime
-	end
 end
 
 function overlap(a::Flight, b::Flight)
@@ -223,13 +159,7 @@ function fetchAllFlights(db::SQLite.DB)
 	return flights
 end
 
-minutes(f::Flight)::Dates.Minute = convert(Dates.Minute, f.arrivalTime - f.departureTime)
 
-function asString(m::Dates.Minute)
-	minutes = m.value % 60
-	hours = m.value ÷ 60
-	@sprintf("%02d:%02d", hours, minutes)
-end
 
 # function printFlightHeader(aa::AutoAlign; showLocation=true, showComment=true)
 # 	print(aa, "Nr.")

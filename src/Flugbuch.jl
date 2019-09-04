@@ -125,12 +125,14 @@ function loadFb(filename::String)
 		return
 	end
 
-	global db = SQLite.DB(filename)
+	global db
+	db = SQLite.DB(filename)
 
 	try
-		SQLite.query(db, "SELECT * FROM flights LIMIT 1");
+		SQLite.Query(db, "SELECT * FROM flights LIMIT 1");
 	catch e
 		println("Fehler beim Lesen aus dem Flugbuch: $e")
+		throw(e)
 		db = missing
 		return
 	end

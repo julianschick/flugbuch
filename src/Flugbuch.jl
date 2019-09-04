@@ -15,12 +15,9 @@ include("flight_group.jl")
 include("flight_accumulator.jl")
 include("util.jl")
 
-export flightbook, main, csvImport
+db = missing
 
-Base.@ccallable function julia_main(ARGS::Vector{String})::Cint
-	main(join(ARGS, " "))
-	return 0
-end
+export createFb, loadFb, unloadFb, printFb, importFb
 
 function main(argstr)
 	args = split(argstr)
@@ -88,7 +85,69 @@ function main(argstr)
 	flightbook(;function_args...)
 end
 
-function flightbook(;
+function createFb(filename::String)
+	if isdir(filename)
+		println("Der angegebene Pfad '$filename' ist ein Verzeichnis.")
+		return
+	end
+	if isfile(filename)
+		println("Die Datei '$filename' ist bereits vorhanden.")
+		return
+	end
+
+	global db = SQLite.DB(filename)
+
+	SQLite.Query(db, "CREATE TABLE IF NOT EXISTS flights (
+						id INTEGER PRIMARY KEY,
+						nr INTEGER NOT NULL,
+						callsign TEXT NULL,
+						aircraftType TEXT NULL,
+						pilot TEXT NOT NULL,
+						copilot TEXT NULL,
+						launch TEXT NOT NULL,
+						date TEXT NOT NULL,
+						departureTime TEXT NOT NULL,
+						arrivalTime TEXT NOT NULL,
+						numberOfLandings INTEGER NOT NULL default 1,
+						departureLocation TEXT NULL,
+						arrivalLocation TEXT NULL,
+						dual BOOLEAN NOT NULL,
+						instr BOOLEAN NOT NULL default false,
+						comments TEXT NULL
+						);")
+
+	println("Flugbuch '$filename' erstellt und geöffnet.")
+end
+
+function loadFb(filename::String)
+	if !isfile(filename)
+		println("Datei '$filename' existiert nicht.")
+		return
+	end
+
+	global db = SQLite.DB(filename)
+
+	try
+		SQLite.query(db, "SELECT * FROM flights LIMIT 1");
+	catch e
+		println("Fehler beim Lesen aus dem Flugbuch: $e")
+		db = missing
+		return
+	end
+
+	println("Flugbuch '$filename' geöffnet.")
+end
+
+function unloadFb()
+	if ismissing(db)
+		println("Es war kein Flugbuch geladen.")
+	end
+
+	global db = missing
+	println("Flugbuch geschlossen.")
+end
+
+function printFb(;
 		beginDate = missing,
 		endDate = missing,
 		beginNr = missing,
@@ -96,17 +155,12 @@ function flightbook(;
 		kwargs...
 	)
 
-	db = SQLite.DB("data.db")
-	flights = fetchAllFlights(db)
+	if ismissing(db)
+		println("Kein Flugbuch geladen.")
+		return
+	end
 
-	# filteredFlights = filter(flights) do f
-	#
-	# end
-	#
-	# if isempty(filteredFlights)
-	# 	println("\nKeine Flüge entsprechen dem Filter.")
-	# 	return
-	# end
+	flights = fetchAllFlights(db)
 
 	flightsByDate = Dict{Date, Vector{Flight}}()
 	for f in flights
@@ -127,23 +181,11 @@ function flightbook(;
 			end
 		end
 
-		#pretty_tablee(flights)
-		#println(connected_components(g))
-
-		#groupedFlights = FlightGroup[]
 		for component in connected_components(g)
-			flightsInComponent = flights[component]
-			push!(flighties, FlightGroup(flightsInComponent))
+			push!(flighties, FlightGroup(flights[component]))
 		end
-
-		#flighties = [flighties; groupedFlights]
-		#acc = FlightAccumulator(groupedFlights)
-		#pretty_tablee(groupedFlights, sums = [(acc, "Σ")])
 	end
 
-
-
-	#pretty_tablee(filteredFlights, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
 	sort!(flighties)
 	flighties = [(i, flighties[i]) for i in eachindex(flighties)]
 
@@ -154,19 +196,29 @@ function flightbook(;
 		(ismissing(beginDate) || date(f) >= beginDate)
 	end
 
+	if isempty(filteredFlighties)
+	 	println("\nKeine Flüge entsprechen dem Filter.")
+	 	return
+	end
+
 	(lastFlightNr, lastFlight) = filteredFlighties[end]
 	allUpToLast = filter(t -> t[1] <= lastFlightNr, flighties)
 
 	filteredAcc = FlightAccumulator([t[2] for t in filteredFlighties])
 	totalAcc = FlightAccumulator([t[2] for t in allUpToLast])
 
-
 	pretty_tablee(filteredFlighties, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
 	nothing
 end
 
-function csvImport(fileName::String)
-	csv = CSV.File(fileName, footerskip=1, normalizenames=true, silencewarnings=true)
+function importFb(fileName::String; kwargs...)
+
+	if ismissing(db)
+		println("Kein Flugbuch geladen.")
+		return
+	end
+
+	csv = CSV.File(fileName, footerskip=1, normalizenames=true, silencewarnings=true, delim = ";")
 	flights = Flight[]
 	ignoredFlights = Flight[]
 	overlappingFlights = Flight[]
@@ -174,7 +226,7 @@ function csvImport(fileName::String)
 
 	for row in csv
 		try
-			(f, forMe) = Flight(row, "Schick, Julian")
+			(f, forMe) = Flight(row, "Mustermann, Martha")
 			if forMe
 				if  sum(overlap.(Ref(f), flights)) > 0
 					push!(overlappingFlights, f)
@@ -196,15 +248,14 @@ function csvImport(fileName::String)
 
 	if !isempty(ignoredFlights)
 		println("\n$(length(ignoredFlights)) ignorierte Flüge (nicht für mein Flugbuch): ")
-		pretty_tablee(ignoredFlights)
+		pretty_tablee(ignoredFlights; kwargs...)
 	end
 
 	if !isempty(overlappingFlights)
 		println("\n$(length(overlappingFlights)) ignorierte Flüge (in den Importdaten überlappend): ")
-		pretty_tablee(overlappingFlights)
+		pretty_tablee(overlappingFlights; kwargs...)
 	end
 
-	db = SQLite.DB("data.db")
 	presentFlights = fetchAllFlights(db)
 
 	overlappingFlights = Flight[]
@@ -220,14 +271,14 @@ function csvImport(fileName::String)
 
 	if !isempty(overlappingFlights)
 		println("\n$(length(overlappingFlights)) ignorierte Flüge (mit bestehenden Flügen überlappend): ")
-		pretty_tablee(overlappingFlights)
+		pretty_tablee(overlappingFlights; kwargs...)
 	else
 		println("\nKeine Flüge überlappen mit bestehenden Flügen.")
 	end
 
 	if !isempty(insertableFlights)
 		println("\n$(length(insertableFlights)) Flüge für den Import:")
-		pretty_tablee(insertableFlights)
+		pretty_tablee(insertableFlights; kwargs...)
 	else
 		println("\nKeine Flüge zu importieren.")
 	end
@@ -259,6 +310,14 @@ function csvImport(fileName::String)
 		SQLite.bind!(stmt, 14, f.comments)
 		SQLite.execute!(stmt)
 	end
+
+	println("\nFlüge importiert.")
+	nothing
+end
+
+function pretty_tablee(flights::Vector{<:Flighty}; kwargs...)
+	tuples = [(i, flights[i]) for i in eachindex(flights)]
+	pretty_tablee(tuples; kwargs...)
 end
 
 function pretty_tablee(
@@ -266,20 +325,11 @@ function pretty_tablee(
 	sums::Vector{Tuple{FlightAccumulator, String}} = Tuple{FlightAccumulator, String}[],
 	limitAircraft::Int = -1,
 	limitPilots::Int = -1,
-	limitLocations::Int = -1,
+	limitLocations::Int = 10,
 	limitComments::Int = -1
 )
 
 	tabRows = [toPrettyTableRow(f) for f in flights]
-
-	# headerRepeat = max(headerRepeat, 10)
-	# for i in 1:length(tabRows)÷headerRepeat
-	# 	ii = i*20 + (i-1)
-	# 	if length(tabRows) - ii > headerRepeat+3
-	# 		insert!(tabRows, ii, toPrettyTableHeader())
-	# 	end
-	# end
-
 
 	hlines = isempty(sums) ? Int[] : [length(tabRows)]
 	sumRows = collect(length(tabRows)+1:length(tabRows) + length(sums))
@@ -360,6 +410,5 @@ function pretty_tablee(
 	)
 
 end
-
 
 end

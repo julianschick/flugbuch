@@ -14,10 +14,6 @@ function Launch(str::AbstractString)
 	end
 end
 
-function Base.show(io::IO, launch::Launch)
-	print(io, "B")
-end
-
 function Base.convert(::Type{String}, l::Launch)
 	if l == Winch
 		return "W"

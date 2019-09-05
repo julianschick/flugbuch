@@ -78,9 +78,9 @@ function Flight(row::CSV.Row, selfName::String)
 	departureLoc = 	applyNormalizations(strip(row.Startort), locNormalizations)
 	arrivalLoc =	applyNormalizations(strip(row.Landeort), locNormalizations)
 
-	if isequal(pilotName, selfName)
+	if lowercase(pilotName) in lowercase.(selfNames)
 		pilot = true
-	elseif isequal(copilotName, selfName)
+	elseif lowercase(copilotName) in lowercase.(selfNames)
 		pilot = false
 	else
 		throw(ArgumentError("Eigener Name weder im Feld 'Pilot' noch im Feld 'Copilot' gefunden."))

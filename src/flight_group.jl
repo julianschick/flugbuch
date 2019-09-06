@@ -69,9 +69,9 @@ instr(g::FlightGroup) = representingFlight(g).instr
 comments(f::Flight) = f.comments
 comments(g::FlightGroup) = join(skipmissing([f.comments for f in g.flights]), ", ")
 
-function toPrettyTableRow(nfy::NumberedOld{<:Flighty})
-	row = toPrettyTableRow(nfy[2])
-	row[1] = nfy[1]
+function toPrettyTableRow(nfy::Numbered{<:Flighty})
+	row = toPrettyTableRow(nfy.value)
+	row[1] = nfy.nr
 	return row
 end
 
@@ -83,7 +83,7 @@ function toPrettyTableRow(fy::Flighty)
 	timeString = asString(minutes(fy))
 
 	return [
-		f.nr,
+		0,
 		Dates.format(f.date, "dd.mm.yyyy"),
 		f.callsign,
 		f.aircraftType,

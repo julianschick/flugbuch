@@ -137,6 +137,7 @@ function unload()
 	global db = missing
 	global lastFrameBegin = missing
 	global lastFrameEnd = missing
+	global bufferedFlighties = missing
 	println(cSucc, "Flugbuch geschlossen.")
 end
 
@@ -152,11 +153,11 @@ function prt(;
 		loadBuffer()
 	end
 
-	filteredFlighties = filter(bufferedFlighties) do (nr, f)
-		(ismissing(beginNr) || nr >= beginNr) &&
-		(ismissing(endNr) || nr <= endNr) &&
-		(ismissing(endDate) || date(f) <= endDate) &&
-		(ismissing(beginDate) || date(f) >= beginDate)
+	filteredFlighties = filter(bufferedFlighties) do f
+		(ismissing(beginNr) || f.nr >= beginNr) &&
+		(ismissing(endNr) || f.nr <= endNr) &&
+		(ismissing(endDate) || date(f.value) <= endDate) &&
+		(ismissing(beginDate) || date(f.value) >= beginDate)
 	end
 
 	if isempty(filteredFlighties)
@@ -166,14 +167,14 @@ function prt(;
 	 	return
 	end
 
-	(lastFlightNr, lastFlight) = filteredFlighties[end]
-	allUpToLast = filter(t -> t[1] <= lastFlightNr, bufferedFlighties)
+	last = filteredFlighties[end]
+	allUpToLast = filter(f -> f.nr <= last.nr, bufferedFlighties)
 
-	filteredAcc = FlightAccumulator([t[2] for t in filteredFlighties])
-	totalAcc = FlightAccumulator([t[2] for t in allUpToLast])
+	filteredAcc = FlightAccumulator([f.value for f in filteredFlighties])
+	totalAcc = FlightAccumulator([f.value for f in allUpToLast])
 
-	global lastFrameBegin = filteredFlighties[1][1]
-	global lastFrameEnd = filteredFlighties[end][1]
+	global lastFrameBegin = filteredFlighties[1].nr
+	global lastFrameEnd = filteredFlighties[end].nr
 
 	pretty_table(filteredFlighties, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
 	nothing
@@ -208,12 +209,11 @@ function expand(nr::Int)
 
 	f = bufferedFlighties[nr]
 
-	if isa(f[2], Flight)
+	if isa(f.value, Flight)
 		pretty_table([f])
 	else
-		flights = f[2].flights
-		numbered = [(i, flights[i]) for i in eachindex(flights)]
-
+		flights = f.value.flights
+		numbered = Numbered{<:Flighty}[Numbered(i, flights[i]) for i in eachindex(flights)]
 		pretty_table(numbered)
 	end
 end
@@ -221,7 +221,7 @@ end
 function loadBuffer()
 
 	if ismissing(db)
-		println("Kein Flugbuch geladen.")
+		println(cErr, "Kein Flugbuch geladen.")
 		return
 	end
 
@@ -258,7 +258,7 @@ function loadBuffer()
 	end
 
 	sort!(flighties)
-	flighties = [(i, flighties[i]) for i in eachindex(flighties)]
+	flighties = Numbered{<:Flighty}[Numbered(i, flighties[i]) for i in eachindex(flighties)]
 
 	global bufferedFlighties = flighties
 end
@@ -374,12 +374,12 @@ function csv(fileName::String; kwargs...)
 end
 
 function pretty_table(flights::Vector{<:Flighty}; kwargs...)
-	tuples = [(i, flights[i]) for i in eachindex(flights)]
+	tuples = Numbered{<:Flighty}[Numbered(i, flights[i]) for i in eachindex(flights)]
 	pretty_table(tuples; kwargs...)
 end
 
 function pretty_table(
-	flights::Vector{Tuple{Int,T}} where T <: Flighty;
+	flights::Vector{Numbered{T} where T <: Flighty};
 	sums::Vector{Tuple{FlightAccumulator, String}} = Tuple{FlightAccumulator, String}[],
 	limitAircraft::Int = -1,
 	limitPilots::Int = -1,
@@ -392,7 +392,7 @@ function pretty_table(
 	hlines = isempty(sums) ? Int[] : [length(tabRows)]
 	if frameGroups
 		for i in eachindex(flights)
-			if isa(flights[i][2], FlightGroup)
+			if isa(flights[i].value, FlightGroup)
 				push!(hlines, i)
 				push!(hlines, i-1)
 			end
@@ -433,12 +433,12 @@ function pretty_table(
 	)
 
 	dualHighlighter = Highlighter(
-		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && dual(flights[i][2])) || j == 16,
+		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && dual(flights[i].value)) || j == 16,
 		crayon = dualCrayon
 	)
 
 	picHighlighter = Highlighter(
-		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && !dual(flights[i][2])) || j == 15,
+		f = (data, i, j) -> (j in 13:14 && i <= length(flights) && !dual(flights[i].value)) || j == 15,
 		crayon = picCrayon
 	)
 
@@ -463,7 +463,7 @@ function pretty_table(
 	)
 
 	groupHighlighter = Highlighter(
-		f = (data, i, j) -> j == 1 && i <= length(flights) && isa(flights[i][2], FlightGroup),
+		f = (data, i, j) -> j == 1 && i <= length(flights) && isa(flights[i].value, FlightGroup),
 		crayon = groupCrayon
 	)
 

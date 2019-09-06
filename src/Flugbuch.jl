@@ -9,12 +9,11 @@ using ArgParse
 using IniFile
 
 abstract type Flighty end
-const Numbered{T} = Tuple{Int, T}
+const NumberedOld{T} = Tuple{Int, T}
 
-struct NumberedS{T}
+struct Numbered{T}
 	nr::Int
 	value::T
-	#NumberedS{T}(nr, value::T) where {T} = nr >= 0 ? new(nr, value) : throw(ArgumentError("Number must be nonnegative."))
 end
 
 include("flight.jl")
@@ -22,11 +21,14 @@ include("flight_group.jl")
 include("flight_accumulator.jl")
 include("util.jl")
 
-export create, load, unload, prt, csv, help
+export create, load, unload, prt, csv, help, n, p, expand
 
 db = missing				#::SQLite.DB
 selfNames = missing 		#::Vector{String}
 bufferedFlighties = missing #::Vector{Numbered{<:Flighty}}
+
+lastFrameBegin = missing
+lastFrameEnd = missing
 
 cErr = crayon"red"
 cWarn = crayon"yellow"
@@ -56,9 +58,19 @@ function loadConfig()
 end
 
 function help()
-	println("""Kommandos
-	sind
-	diese""")
+	println()
+	println("""Kommandos:
+
+	> create("<dateiname>")     Erstellt ein neues Flugbuch und öffnet es
+	> load("<dateiname>")       Öffnet ein bestehendes Flugbuch
+	> unload()                  Schließt das geöffnete Flugbuch
+	> prt()                     Gibt das Flugbuch aus
+	> csv("<dateiname>")        Liest Flüge	aus der gegebenen CSV-Datei ein
+	> help()                    Gibt diese Hilfe aus
+	> n()                       Zeigt den nächsten Flug an
+	> p()                       Zeigt den vorherigen Flug an
+	> expand(<flugnr>)          Zeigt die in einer Zeile gruppierten Flüge einzeln an
+	""")
 end
 
 function create(filename::String)
@@ -113,7 +125,7 @@ function load(filename::AbstractString)
 		return
 	end
 
-	println("Flugbuch '$filename' geöffnet.")
+	println(cSucc, "Flugbuch '$filename' geöffnet.")
 end
 
 function unload()
@@ -123,6 +135,8 @@ function unload()
 	end
 
 	global db = missing
+	global lastFrameBegin = missing
+	global lastFrameEnd = missing
 	println(cSucc, "Flugbuch geschlossen.")
 end
 
@@ -147,6 +161,8 @@ function prt(;
 
 	if isempty(filteredFlighties)
 	 	println("\nKeine Flüge entsprechen dem Filter.")
+		global lastFrameBegin = missing
+		global lastFrameEnd = missing
 	 	return
 	end
 
@@ -156,8 +172,27 @@ function prt(;
 	filteredAcc = FlightAccumulator([t[2] for t in filteredFlighties])
 	totalAcc = FlightAccumulator([t[2] for t in allUpToLast])
 
+	global lastFrameBegin = filteredFlighties[1][1]
+	global lastFrameEnd = filteredFlighties[end][1]
+
 	pretty_table(filteredFlighties, sums = [(filteredAcc, "Σ"), (totalAcc, "Σ (total)")]; kwargs...)
 	nothing
+end
+
+function n()
+	if ismissing(lastFrameEnd)
+		println(cWarn, "\nKein vorheriger Flug, dessen Nachfolger angezeigt werden kann.")
+		return
+	end
+	prt(beginNr = lastFrameEnd+1, endNr = lastFrameEnd+1)
+end
+
+function p()
+	if ismissing(lastFrameBegin)
+		println(cWarn, "\nKein vorheriger Flug, dessen Vorgänger angezeigt werden kann.")
+		return
+	end
+	prt(beginNr = lastFrameBegin-1, endNr = lastFrameBegin-1)
 end
 
 function expand(nr::Int)
@@ -166,6 +201,21 @@ function expand(nr::Int)
 		loadBuffer()
 	end
 
+	if nr < 1 || nr > length(bufferedFlighties)
+		println(cErr, "\nUngültige Flugnummer $nr.")
+		return
+	end
+
+	f = bufferedFlighties[nr]
+
+	if isa(f[2], Flight)
+		pretty_table([f])
+	else
+		flights = f[2].flights
+		numbered = [(i, flights[i]) for i in eachindex(flights)]
+
+		pretty_table(numbered)
+	end
 end
 
 function loadBuffer()
@@ -335,8 +385,7 @@ function pretty_table(
 	limitPilots::Int = -1,
 	limitLocations::Int = 10,
 	limitComments::Int = -1,
-	frameGroups::Bool = true
-)
+	frameGroups::Bool = true)
 
 	tabRows = [toPrettyTableRow(f) for f in flights]
 
@@ -440,7 +489,6 @@ function pretty_table(
 		),
 		filters_col = (columnFilter,)
 	)
-
 end
 
 #
@@ -512,5 +560,7 @@ function main(argstr)
 
 	flightbook(;function_args...)
 end
+
+init()
 
 end

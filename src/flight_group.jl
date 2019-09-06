@@ -69,7 +69,7 @@ instr(g::FlightGroup) = representingFlight(g).instr
 comments(f::Flight) = f.comments
 comments(g::FlightGroup) = join(skipmissing([f.comments for f in g.flights]), ", ")
 
-function toPrettyTableRow(nfy::Numbered{<:Flighty})
+function toPrettyTableRow(nfy::NumberedOld{<:Flighty})
 	row = toPrettyTableRow(nfy[2])
 	row[1] = nfy[1]
 	return row

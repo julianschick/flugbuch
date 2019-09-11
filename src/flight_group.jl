@@ -63,7 +63,7 @@ numberOfLandings(g::FlightGroup) = sum([f.numberOfLandings for f in g.flights])
 dual(f::Flight) = f.dual
 dual(g::FlightGroup) = representingFlight(g).dual
 
-instr(f::Flight) = f.dual
+instr(f::Flight) = f.instr
 instr(g::FlightGroup) = representingFlight(g).instr
 
 comments(f::Flight) = f.comments

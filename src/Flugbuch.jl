@@ -23,6 +23,7 @@ include("util.jl")
 
 export create, load, unload, prt, csv, help, n, p, expand
 
+dbFilename = missing 		#::String
 db = missing				#::SQLite.DB
 selfNames = missing 		#::Vector{String}
 bufferedFlighties = missing #::Vector{Numbered{<:Flighty}}
@@ -34,13 +35,7 @@ cErr = crayon"red"
 cWarn = crayon"yellow"
 cSucc = crayon"green"
 
-function init()
-	loadConfig()
-end
-
-function loadConfig()
-	configFilename = joinpath(homedir(), ".flugbuchrc")
-
+function loadConfig(configFilename::String)
 	if !isfile(configFilename)
 		println(cWarn, "Konfigurationsdatei ~/.flugbuchrc nicht vorhanden.")
 		return
@@ -51,11 +46,14 @@ function loadConfig()
 	s = get(conf, "", "mynames", "default")
 	global selfNames = filter(x -> x != "", strip.(split(s, ";")))
 
-	dbFilename = get(conf, "", "defaultdb", missing)
-	if !ismissing(dbFilename)
-		load(dbFilename)
-	end
+	global dbFilename = get(conf, "", "defaultdb", missing)
 end
+
+function loadConfig()
+	loadConfig(joinpath(homedir(), ".flugbuchrc"))
+end
+
+loadConfig()
 
 function help()
 	println()
@@ -63,6 +61,7 @@ function help()
 
 	> create("<dateiname>")     Erstellt ein neues Flugbuch und öffnet es
 	> load("<dateiname>")       Öffnet ein bestehendes Flugbuch
+	> load()					Öffnet das Standard-Flugbuch
 	> unload()                  Schließt das geöffnete Flugbuch
 	> prt()                     Gibt das Flugbuch aus
 	> csv("<dateiname>")        Liest Flüge	aus der gegebenen CSV-Datei ein
@@ -104,7 +103,7 @@ function create(filename::String)
 						comments TEXT NULL
 						);")
 
-	println("Flugbuch '$filename' erstellt und geöffnet.")
+	println(cSucc, "Flugbuch '$filename' erstellt und geöffnet.")
 end
 
 function load(filename::AbstractString)
@@ -113,8 +112,7 @@ function load(filename::AbstractString)
 		return
 	end
 
-	global db
-	db = SQLite.DB(filename)
+	global db = SQLite.DB(filename)
 
 	try
 		SQLite.Query(db, "SELECT * FROM flights LIMIT 1");
@@ -126,6 +124,14 @@ function load(filename::AbstractString)
 	end
 
 	println(cSucc, "Flugbuch '$filename' geöffnet.")
+end
+
+function load()
+	if !ismissing(dbFilename)
+		load(dbFilename)
+	else
+		println(cWarn, "Kein Standard-Flugbuch in der Konfigurationsdatei festgelegt.")
+	end
 end
 
 function unload()
@@ -150,7 +156,9 @@ function prt(;
 	)
 
 	if ismissing(bufferedFlighties)
-		loadBuffer()
+		if !loadBuffer()
+			return
+		end
 	end
 
 	filteredFlighties = filter(bufferedFlighties) do f
@@ -180,20 +188,24 @@ function prt(;
 	nothing
 end
 
-function n()
+function prt(beginNr::Int, endNr::Int; kwargs...)
+	prt(beginNr=beginNr, endNr=endNr; kwargs...)
+end
+
+function n(; kwargs...)
 	if ismissing(lastFrameEnd)
 		println(cWarn, "\nKein vorheriger Flug, dessen Nachfolger angezeigt werden kann.")
 		return
 	end
-	prt(beginNr = lastFrameEnd+1, endNr = lastFrameEnd+1)
+	prt(beginNr = lastFrameEnd+1, endNr = lastFrameEnd+1; kwargs...)
 end
 
-function p()
+function p(; kwargs...)
 	if ismissing(lastFrameBegin)
 		println(cWarn, "\nKein vorheriger Flug, dessen Vorgänger angezeigt werden kann.")
 		return
 	end
-	prt(beginNr = lastFrameBegin-1, endNr = lastFrameBegin-1)
+	prt(beginNr = lastFrameBegin-1, endNr = lastFrameBegin-1; kwargs...)
 end
 
 function expand(nr::Int)
@@ -210,11 +222,12 @@ function expand(nr::Int)
 	f = bufferedFlighties[nr]
 
 	if isa(f.value, Flight)
-		pretty_table([f])
+		pretty_table(Numbered{<:Flighty}[f])
 	else
 		flights = f.value.flights
 		numbered = Numbered{<:Flighty}[Numbered(i, flights[i]) for i in eachindex(flights)]
-		pretty_table(numbered)
+		acc = FlightAccumulator([flt for flt in flights])
+		pretty_table(numbered, sums=[(acc, "Σ")])
 	end
 end
 
@@ -222,7 +235,7 @@ function loadBuffer()
 
 	if ismissing(db)
 		println(cErr, "Kein Flugbuch geladen.")
-		return
+		return false
 	end
 
 	flights = fetchAllFlights(db)
@@ -261,21 +274,23 @@ function loadBuffer()
 	flighties = Numbered{<:Flighty}[Numbered(i, flighties[i]) for i in eachindex(flighties)]
 
 	global bufferedFlighties = flighties
+	return true
 end
 
-function csv(fileName::String; kwargs...)
+function csv(fileName::String; autoconfirm = false, kwargs...)
 
 	if ismissing(db)
-		println("Kein Flugbuch geladen.")
+		println(cErr, "Kein Flugbuch geladen.")
 		return
 	end
 
 	if ismissing(selfNames)
-		println("Eigener Name nicht festgelegt.")
+		println(cErr, "Eigener Name nicht festgelegt.")
 		return
 	end
 
 	csv = CSV.File(fileName, footerskip=1, normalizenames=true, silencewarnings=true, delim = ";")
+
 	flights = Flight[]
 	ignoredFlights = Flight[]
 	overlappingFlights = Flight[]
@@ -283,7 +298,7 @@ function csv(fileName::String; kwargs...)
 
 	for row in csv
 		try
-			(f, forMe) = Flight(row, "Mustermann, Martha")
+			(f, forMe) = Flight(row)
 			if forMe
 				if  sum(overlap.(Ref(f), flights)) > 0
 					push!(overlappingFlights, f)
@@ -341,13 +356,18 @@ function csv(fileName::String; kwargs...)
 		return
 	end
 
-	println("\nÜberprüfen Sie die obigen Angaben und geben Sie 'ja' ein, wenn der Import durchgeführt werden soll.")
-	userInput = readline()
+	if !autoconfirm
+		println("\nÜberprüfen Sie die obigen Angaben und geben Sie 'ja' ein, wenn der Import durchgeführt werden soll.")
+		userInput = readline()
 
-	if userInput != "ja"
-		println("Vorgang abgebrochen.")
-		return
+		if userInput != "ja"
+			println("Vorgang abgebrochen.")
+			return
+		end
 	end
+
+	#invalidate buffer
+	global bufferedFlighties = missing
 
 	stmt = SQLite.Stmt(db, "INSERT INTO flights (nr, callsign, aircraftType, pilot, copilot, launch, date, departureTime, arrivalTime, departureLocation, arrivalLocation, dual, instr, comments) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)")
 
@@ -385,7 +405,8 @@ function pretty_table(
 	limitPilots::Int = -1,
 	limitLocations::Int = 10,
 	limitComments::Int = -1,
-	frameGroups::Bool = true)
+	frameGroups::Bool = true,
+	printSums::Bool = true)
 
 	tabRows = [toPrettyTableRow(f) for f in flights]
 
@@ -399,9 +420,13 @@ function pretty_table(
 		end
 	end
 
-	sumRows = collect(length(tabRows)+1:length(tabRows) + length(sums))
-	for (acc, name) in sums
-		push!(tabRows, toPrettyTableRow(acc,  name))
+	if printSums
+		sumRows = collect(length(tabRows)+1:length(tabRows) + length(sums))
+		for (acc, name) in sums
+			push!(tabRows, toPrettyTableRow(acc,  name))
+		end
+	else
+		sumRows = []
 	end
 
 	tab = permutedims(hcat(tabRows...))
@@ -495,72 +520,75 @@ end
 # main
 #
 
-function main(argstr)
-	args = split(argstr)
-
-	s = ArgParseSettings("Flugbuch",
-                         version = "Version 1.0",
-                         add_version = true,
-						 prog = "flugbuch.jl")
-
-	@add_arg_table s begin
-        "--from", "-f"
-			help = "Sichtbare Flüge einschränken anhand Datum oder Flugnr. (beides inklusive) für den Beginn des sichtbaren Bereichs"
-        "--to", "-t"
-			help = "Sichtbare Flüge einschränken anhand Datum oder Flugnr. (beides inklusive) für das Ende des sichtbaren Bereichs"
-    end
-
-    parsed_args = parse_args(args, s)
-	function_args = Dict()
-
-	from_fail, to_fail = false, false
-
-	if haskey(parsed_args, "from") && parsed_args["from"] != nothing
-		from = parsed_args["from"]
-		from_fail = false
-
-		if tryparse(Int, from) != nothing
-			function_args[:beginNr] = parse(Int, from)
-		else
-			if occursin(r"^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,4}$", parsed_args["from"])
-				try
-					function_args[:beginDate] = Date(parsed_args["from"], DateFormat("d.m.Y"))
-				catch
-					from_fail = true
-				end
-			else
-				from_fail = true
-			end
-		end
-	end
-
-	if haskey(parsed_args, "to") && parsed_args["to"] != nothing
-		to = parsed_args["to"]
-		to_fail = false
-
-		if tryparse(Int, to) != nothing
-			function_args[:endNr] = parse(Int, to)
-		else
-			if occursin(r"^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,4}$", parsed_args["to"])
-				try
-					function_args[:endDate] = Date(parsed_args["to"], DateFormat("d.m.Y"))
-				catch
-					to_fail = true
-				end
-			else
-				to_fail = true
-			end
-		end
-
-	end
-
-
-	!from_fail || print("Das Argument --from ist im falschen Format (es wird eine Zahl oder ein Datum erwartet) und wird ignoriert.")
-	!to_fail || print("Das Argument --to ist im falschen Format (es wird eine Zahl oder ein Datum erwartet) und wird ignoriert.")
-
-	flightbook(;function_args...)
-end
-
-init()
+# Base.@ccallable function julia_main(ARGS::Vector{String})::Cint
+#     main(join(ARGS, " "))
+#     return 0
+# end
+#
+# function main(argstr)
+# 	args = split(argstr)
+#
+# 	s = ArgParseSettings("Flugbuch",
+#                          version = "Version 1.0",
+#                          add_version = true,
+# 						 prog = "Flugbuch.jl")
+#
+# 	@add_arg_table s begin
+#         "--from", "-f"
+# 			help = "Sichtbare Flüge einschränken anhand Datum oder Flugnr. (beides inklusive) für den Beginn des sichtbaren Bereichs"
+#         "--to", "-t"
+# 			help = "Sichtbare Flüge einschränken anhand Datum oder Flugnr. (beides inklusive) für das Ende des sichtbaren Bereichs"
+#     end
+#
+#     parsed_args = parse_args(args, s)
+# 	function_args = Dict()
+#
+# 	from_fail, to_fail = false, false
+#
+# 	if haskey(parsed_args, "from") && parsed_args["from"] != nothing
+# 		from = parsed_args["from"]
+# 		from_fail = false
+#
+# 		if tryparse(Int, from) != nothing
+# 			function_args[:beginNr] = parse(Int, from)
+# 		else
+# 			if occursin(r"^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,4}$", parsed_args["from"])
+# 				try
+# 					function_args[:beginDate] = Date(parsed_args["from"], DateFormat("d.m.Y"))
+# 				catch
+# 					from_fail = true
+# 				end
+# 			else
+# 				from_fail = true
+# 			end
+# 		end
+# 	end
+#
+# 	if haskey(parsed_args, "to") && parsed_args["to"] != nothing
+# 		to = parsed_args["to"]
+# 		to_fail = false
+#
+# 		if tryparse(Int, to) != nothing
+# 			function_args[:endNr] = parse(Int, to)
+# 		else
+# 			if occursin(r"^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,4}$", parsed_args["to"])
+# 				try
+# 					function_args[:endDate] = Date(parsed_args["to"], DateFormat("d.m.Y"))
+# 				catch
+# 					to_fail = true
+# 				end
+# 			else
+# 				to_fail = true
+# 			end
+# 		end
+#
+# 	end
+#
+#
+# 	!from_fail || print("Das Argument --from ist im falschen Format (es wird eine Zahl oder ein Datum erwartet) und wird ignoriert.")
+# 	!to_fail || print("Das Argument --to ist im falschen Format (es wird eine Zahl oder ein Datum erwartet) und wird ignoriert.")
+#
+# 	println("helo")
+# end
 
 end

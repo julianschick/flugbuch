@@ -47,7 +47,7 @@ function Flight(row::NamedTuple)
 	)
 end
 
-function Flight(row::CSV.Row, selfName::String)
+function Flight(row::CSV.Row)
 	inMyFlightbook = true
 	!ismissing(row.Datum)		|| throw(ArgumentError("Datum nicht gegeben."))
 	!ismissing(row.Lfz_) 		|| throw(ArgumentError("Kennzeichen nicht gegeben."))
@@ -80,7 +80,7 @@ function Flight(row::CSV.Row, selfName::String)
 
 	if lowercase(pilotName) in lowercase.(selfNames)
 		pilot = true
-	elseif lowercase(copilotName) in lowercase.(selfNames)
+	elseif !ismissing(copilotName) && lowercase(copilotName) in lowercase.(selfNames)
 		pilot = false
 	else
 		throw(ArgumentError("Eigener Name weder im Feld 'Pilot' noch im Feld 'Copilot' gefunden."))

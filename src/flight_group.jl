@@ -85,8 +85,8 @@ function toPrettyTableRow(fy::Flighty)
 	return [
 		0,
 		Dates.format(f.date, "dd.mm.yyyy"),
-		f.callsign,
 		f.aircraftType,
+		f.callsign,
 		f.pilot,
 		!ismissing(copilot(fy)) ? copilot(fy) : "-",
 		convert(String, f.launch),
@@ -106,7 +106,7 @@ end
 
 function toPrettyTableHeader()
 	return [
-		"Nr.", "Datum", "Reg.", "Typ",
+		"Nr.", "Datum", "Muster", "Reg.",
 		"Pilot", "Co", "S",
 		"Von", "Nach", "Start", "Land", "#L",
 		"Zeit", "~", "PIC", "DUAL", "INSTR",

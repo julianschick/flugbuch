@@ -21,7 +21,8 @@ include("flight_group.jl")
 include("flight_accumulator.jl")
 include("util.jl")
 
-export create, load, unload, prt, csv, help, n, p, expand
+export create, load, unload, prt, csv, help, n, p, expand, deadlines
+export Date	# re-export
 
 dbFilename = missing 		#::String
 db = missing				#::SQLite.DB
@@ -58,18 +59,45 @@ loadConfig()
 function help()
 	println()
 	println("""Kommandos:
+--------------------------------------------------------------------------------
 
-	> create("<dateiname>")     Erstellt ein neues Flugbuch und öffnet es
-	> load("<dateiname>")       Öffnet ein bestehendes Flugbuch
-	> load()					Öffnet das Standard-Flugbuch
-	> unload()                  Schließt das geöffnete Flugbuch
-	> prt()                     Gibt das Flugbuch aus
-	> csv("<dateiname>")        Liest Flüge	aus der gegebenen CSV-Datei ein
-	> help()                    Gibt diese Hilfe aus
-	> n()                       Zeigt den nächsten Flug an
-	> p()                       Zeigt den vorherigen Flug an
-	> expand(<flugnr>)          Zeigt die in einer Zeile gruppierten Flüge einzeln an
-	""")
+ > create("foo.db")              Erstellt ein neues Flugbuch in der Datei
+                                'foo.db' und öffnet es
+ > load("foo.db")                Öffnet das Flugbuch in der Datei 'foo.db'
+ > load()                        Öffnet das Standard-Flugbuch, das in der
+                                 Konfigurationsdatei festgelegt ist
+ > unload()                      Schließt das geöffnete Flugbuch
+ > prt()                         Gibt das komplette Flugbuch aus
+ > prt(10, 20)                   Gibt die Zeilen 10 bis 20 des Flugbuchs aus
+ > prt(11)                       Gibt die Zeile 11 des Flugbuchs aus
+ > csv("foo.csv")                Liest Flüge aus der CSV-Datei 'foo.csv' ein
+ > help()                        Gibt diese Hilfe aus
+ > n()                           Zeigt den nächsten Flug an
+ > p()                           Zeigt den vorherigen Flug an
+ > expand(34)                    Zeigt die in der Zeile 34 gruppierten Flüge
+                                 einzeln an
+ > deadlines()                   Zeigt an, ob die gesetzlichen Fristen zur Zeit
+                                 erfüllt sind, und wann sie ablaufen werden
+
+
+Zusatzparameter, die den meisten Funktionen mitgegeben werden können:
+--------------------------------------------------------------------------------
+
+ - beginNr = 10                  Beginne die Ausgabe mit Zeile 10
+ - endNr = 50                    Beende die Ausgabe mit Zeile 50
+ - beginDate = Date(2017,1,1)    Zeige nur Flüge am und nach dem 01.01.2017
+ - endDate = Date(2019,2,1)      Zeige nur Flüge am und bis zum 01.02.2019
+ - limitAircraft = 10            Kürze die Flugzeugtypen auf 10 Zeichen
+ - limitPilots = 10              Kürze Pilot und Copilot auf 10 Zeichen
+ - limitLocations = 10           Kürze Start- und Landeort auf 10 Zeichen
+ - limitComments = 20            Kürze die Bemerkungen auf 10 Zeichen
+ - frameGroups = true            Umrahme gruppierte Flüge
+ - printSums= true               Gebe die Summen in der Fußzeile aus
+""")
+end
+
+function deadlines()
+
 end
 
 function create(filename::String)
@@ -190,6 +218,10 @@ end
 
 function prt(beginNr::Int, endNr::Int; kwargs...)
 	prt(beginNr=beginNr, endNr=endNr; kwargs...)
+end
+
+function prt(nr::Int; kwargs...)
+	prt(beginNr=nr, endNr=nr; kwargs...)
 end
 
 function n(; kwargs...)
@@ -403,7 +435,7 @@ function pretty_table(
 	sums::Vector{Tuple{FlightAccumulator, String}} = Tuple{FlightAccumulator, String}[],
 	limitAircraft::Int = -1,
 	limitPilots::Int = -1,
-	limitLocations::Int = 10,
+	limitLocations::Int = -1,
 	limitComments::Int = -1,
 	frameGroups::Bool = true,
 	printSums::Bool = true)

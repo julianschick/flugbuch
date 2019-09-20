@@ -109,7 +109,7 @@ function toPrettyTableHeader()
 		"Nr.", "Datum", "Muster", "Reg.",
 		"Pilot", "Co",
 		"Von", "Nach", "S", "Start", "Land",
-		"Zeit", "~", "PIC", "DUAL", "INSTR", "#L"
+		"Zeit", "~", "PIC", "DUAL", "INSTR", "#L",
 		"Bemerkungen"
 	]
 end

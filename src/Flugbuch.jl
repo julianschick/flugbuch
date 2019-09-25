@@ -505,17 +505,17 @@ function pretty_table(
 	)
 
 	picSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 15 && i in sumRows,
+		f = (data, i, j) -> j == 14 && i in sumRows,
 		crayon = sumCrayon * picCrayon
 	)
 
 	dualSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 16 && i in sumRows,
+		f = (data, i, j) -> j == 15 && i in sumRows,
 		crayon = sumCrayon * dualCrayon
 	)
 
 	instrSumHighlighter = Highlighter(
-		f = (data, i, j) -> j == 17 && i in sumRows,
+		f = (data, i, j) -> j == 16 && i in sumRows,
 		crayon = sumCrayon * instrCrayon
 	)
 

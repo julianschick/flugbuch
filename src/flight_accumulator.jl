@@ -13,10 +13,11 @@ FlightAccumulator(flights::Vector{<:Flighty}) = sum([FlightAccumulator(); flight
 function toPrettyTableRow(acc::FlightAccumulator, comment)
 	return [
 		"",
-		"", "", "", "", "", "", "", "", "", "", acc.count,
+		"", "", "", "", "", "", "", "", "", "",
 		asString(acc.totalTime),
 		"",
 		asString(acc.picTime), asString(acc.dualTime), asString(acc.instrTime),
+		acc.count,
 		comment
 	]
 end

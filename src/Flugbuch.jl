@@ -7,6 +7,7 @@ using PrettyTables
 using Dates
 using ArgParse
 using IniFile
+using DataFrames
 
 abstract type Flighty end
 const NumberedOld{T} = Tuple{Int, T}
@@ -21,7 +22,7 @@ include("flight_group.jl")
 include("flight_accumulator.jl")
 include("util.jl")
 
-export create, load, unload, prt, csv, help, n, p, expand, deadlines
+export create, load, unload, prt, csv, help, n, p, expand, deadlines, rudi
 export Date	# re-export
 
 dbFilename = missing 		#::String
@@ -132,6 +133,16 @@ function create(filename::String)
 						);")
 
 	println(cSucc, "Flugbuch '$filename' erstellt und geöffnet.")
+end
+
+function rudi()
+	if !ismissing(dbFilename)
+		global db = SQLite.DB(dbFilename)
+		#SQLite.execute(db, "SELECT * FROM flights LIMIT 1") |> DataFrame
+		print(SQLite.execute(db, "SELECT * FROM flights"))
+	else
+		println(cWarn, "Kein Standard-Flugbuch in der Konfigurationsdatei festgelegt.")
+	end
 end
 
 function load(filename::AbstractString)
